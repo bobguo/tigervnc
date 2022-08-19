@@ -232,38 +232,6 @@ static void mainloop(const char* vncserver, network::Socket* sock)
   }
 }
 
-    delete cc;
-
-    if (fatalError) {
-      assert(exitError != NULL);
-      if (alertOnFatalError)
-        fl_alert("%s", exitError);
-      break;
-    }
-
-    if (exitError == NULL)
-      break;
-
-    if(reconnectOnError && (sock == NULL)) {
-      int ret;
-      ret = fl_choice(_("%s\n\n"
-                        "Attempt to reconnect?"),
-                      NULL, fl_yes, fl_no, exitError);
-      free(exitError);
-      exitError = NULL;
-      if (ret == 1)
-        continue;
-      else
-        break;
-    }
-
-    if (alertOnFatalError)
-      fl_alert("%s", exitError);
-
-    break;
-  }
-}
-
 #ifdef __APPLE__
 static void about_callback(Fl_Widget *widget, void *data)
 {

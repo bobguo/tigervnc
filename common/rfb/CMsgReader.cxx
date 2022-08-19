@@ -194,9 +194,10 @@ bool CMsgReader::readMsg()
       break;
     case pseudoEncodingQEMUKeyEvent:
       handler->supportsQEMUKeyEvent();
+      ret = true;
       break;
     default:
-      readRect(Rect(x, y, x+w, y+h), encoding);
+      ret = readRect(dataRect, rectEncoding);
       break;
     };
 

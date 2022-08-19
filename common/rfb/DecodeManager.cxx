@@ -103,7 +103,7 @@ DecodeManager::~DecodeManager()
 
 //这里，decodeRect把rect的数据缓冲到workQueue里，并由worker线程处理
 //处理函数在DecodeManager::DecodeThread::worker
-void DecodeManager::decodeRect(const Rect& r, int encoding,
+bool DecodeManager::decodeRect(const Rect& r, int encoding,
                                ModifiablePixelBuffer* pb)
 {
   Decoder *decoder;
