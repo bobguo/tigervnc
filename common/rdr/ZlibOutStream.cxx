@@ -17,6 +17,10 @@
  * USA.
  */
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <stdio.h>
 
 #include <rdr/ZlibOutStream.h>
@@ -33,9 +37,9 @@ using namespace rdr;
 
 enum { DEFAULT_BUF_SIZE = 16384 };
 
-ZlibOutStream::ZlibOutStream(OutStream* os, size_t bufSize_, int compressLevel)
+ZlibOutStream::ZlibOutStream(OutStream* os, int compressLevel)
   : underlying(os), compressionLevel(compressLevel), newLevel(compressLevel),
-    bufSize(bufSize_ ? bufSize_ : DEFAULT_BUF_SIZE), offset(0)
+    bufSize(DEFAULT_BUF_SIZE), offset(0)
 {
   zs = new z_stream;
   zs->zalloc    = Z_NULL;
@@ -92,50 +96,51 @@ void ZlibOutStream::flush()
 #endif
 
   // Force out everything from the zlib encoder
-  deflate(Z_SYNC_FLUSH);
+  deflate(corked ? Z_NO_FLUSH : Z_SYNC_FLUSH);
 
-  offset += ptr - start;
-  ptr = start;
+  if (zs->avail_in == 0) {
+    offset += ptr - start;
+    ptr = start;
+  } else {
+    // didn't consume all the data?  try shifting what's left to the
+    // start of the buffer.
+    memmove(start, zs->next_in, ptr - zs->next_in);
+    offset += zs->next_in - start;
+    ptr -= zs->next_in - start;
+  }
 }
 
-size_t ZlibOutStream::overrun(size_t itemSize, size_t nItems)
+void ZlibOutStream::cork(bool enable)
+{
+  OutStream::cork(enable);
+
+  underlying->cork(enable);
+}
+
+void ZlibOutStream::overrun(size_t needed)
 {
 #ifdef ZLIBOUT_DEBUG
   vlog.debug("overrun");
 #endif
 
-  if (itemSize > bufSize)
-    throw Exception("ZlibOutStream overrun: max itemSize exceeded");
+  if (needed > bufSize)
+    throw Exception("ZlibOutStream overrun: buffer size exceeded");
 
   checkCompressionLevel();
 
-  while ((size_t)(end - ptr) < itemSize) {
-    zs->next_in = start;
-    zs->avail_in = ptr - start;
+  while (avail() < needed) {
+    bool oldCorked;
 
-    deflate(Z_NO_FLUSH);
+    // use corked to make zlib a bit more efficient since we're not trying
+    // to end the stream here, just make some room
 
-    // output buffer not full
+    oldCorked = corked;
+    corked = true;
 
-    if (zs->avail_in == 0) {
-      offset += ptr - start;
-      ptr = start;
-    } else {
-      // but didn't consume all the data?  try shifting what's left to the
-      // start of the buffer.
-      vlog.info("z out buf not full, but in data not consumed");
-      memmove(start, zs->next_in, ptr - zs->next_in);
-      offset += zs->next_in - start;
-      ptr -= zs->next_in - start;
-    }
+    flush();
+
+    corked = oldCorked;
   }
-
-  size_t nAvail;
-  nAvail = (end - ptr) / itemSize;
-  if (nAvail < nItems)
-    return nAvail;
-
-  return nItems;
 }
 
 void ZlibOutStream::deflate(int flush)
@@ -149,9 +154,9 @@ void ZlibOutStream::deflate(int flush)
     return;
 
   do {
-    underlying->check(1);
-    zs->next_out = underlying->getptr();
-    zs->avail_out = underlying->getend() - underlying->getptr();
+    size_t chunk;
+    zs->next_out = underlying->getptr(1);
+    zs->avail_out = chunk = underlying->avail();
 
 #ifdef ZLIBOUT_DEBUG
     vlog.debug("calling deflate, avail_in %d, avail_out %d",
@@ -172,7 +177,7 @@ void ZlibOutStream::deflate(int flush)
                zs->next_out-underlying->getptr());
 #endif
 
-    underlying->setptr(zs->next_out);
+    underlying->setptr(chunk - zs->avail_out);
   } while (zs->avail_out == 0);
 }
 

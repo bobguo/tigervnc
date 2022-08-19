@@ -1,5 +1,5 @@
 add_executable(vncsession vncsession.c)
-target_link_libraries(vncsession ${PAM_LIBS})
+target_link_libraries(vncsession ${PAM_LIBS} ${SELINUX_LIBS})
 
 configure_file(vncserver@.service.in vncserver@.service @ONLY)
 configure_file(vncsession-start.in vncsession-start @ONLY)
@@ -14,6 +14,8 @@ install(FILES vncserver.man DESTINATION ${CMAKE_INSTALL_FULL_MANDIR}/man8 RENAME
 install(FILES vncserver-config-defaults vncserver-config-mandatory DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/tigervnc)
 
 install(FILES vncserver.users DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/tigervnc)
+
+install(FILES HOWTO.md DESTINATION ${CMAKE_INSTALL_FULL_DOCDIR})
 
 if(INSTALL_SYSTEMD_UNITS)
   install(FILES ${CMAKE_CURRENT_BINARY_DIR}/vncserver@.service DESTINATION ${CMAKE_INSTALL_FULL_UNITDIR})

@@ -37,6 +37,11 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#ifdef HAVE_SELINUX
+#include <selinux/selinux.h>
+#include <selinux/restorecon.h>
+#endif
+
 extern char **environ;
 
 // PAM service name
@@ -76,7 +81,7 @@ begin_daemon(void)
         /* Wait for child to finish startup */
         len = read(fds[0], buf, 1);
         if (len != 1) {
-            fprintf(stderr, "Failure daemonizing\n");
+            fprintf(stderr, "Failed to start session\n");
             _exit(EX_OSERR);
         }
 
@@ -102,6 +107,12 @@ begin_daemon(void)
     if (pid != 0)
         _exit(0);
 
+    /* A safe working directory */
+    if (chdir("/") < 0) {
+        perror("chdir");
+        return -1;
+    }
+
     /* Send all stdio to /dev/null */
     devnull = open("/dev/null", O_RDWR);
     if (devnull < 0) {
@@ -116,12 +127,6 @@ begin_daemon(void)
     }
     if (devnull > 2)
         close(devnull);
-
-    /* A safe working directory */
-    if (chdir("/") < 0) {
-        perror("chdir");
-        return -1;
-    }
 
     return 0;
 }
@@ -318,19 +323,19 @@ switch_user(const char *username, uid_t uid, gid_t gid)
 {
     // We must change group stuff first, because only root can do that.
     if (setgid(gid) < 0) {
-        perror(": setgid");
+        syslog(LOG_CRIT, "setgid: %s", strerror(errno));
         _exit(EX_OSERR);
     }
 
     // Supplementary groups.
     if (initgroups(username, gid) < 0) {
-        perror("initgroups");
+        syslog(LOG_CRIT, "initgroups: %s", strerror(errno));
         _exit(EX_OSERR);
     }
 
     // Set euid, ruid and suid
     if (setuid(uid) < 0) {
-        perror("setuid");
+        syslog(LOG_CRIT, "setuid: %s", strerror(errno));
         _exit(EX_OSERR);
     }
 }
@@ -339,16 +344,17 @@ static void
 redir_stdio(const char *homedir, const char *display)
 {
     int fd;
-    char hostname[HOST_NAME_MAX+1];
+    size_t hostlen;
+    char* hostname = NULL;
     char logfile[PATH_MAX];
 
     fd = open("/dev/null", O_RDONLY);
     if (fd == -1) {
-        perror("open");
+        syslog(LOG_CRIT, "Failure redirecting stdin: open: %s", strerror(errno));
         _exit(EX_OSERR);
     }
     if (dup2(fd, 0) == -1) {
-        perror("dup2");
+        syslog(LOG_CRIT, "Failure redirecting stdin: dup2: %s", strerror(errno));
         _exit(EX_OSERR);
     }
     close(fd);
@@ -356,25 +362,44 @@ redir_stdio(const char *homedir, const char *display)
     snprintf(logfile, sizeof(logfile), "%s/.vnc", homedir);
     if (mkdir(logfile, 0755) == -1) {
         if (errno != EEXIST) {
-            perror("mkdir");
+            syslog(LOG_CRIT, "Failure creating \"%s\": %s", logfile, strerror(errno));
             _exit(EX_OSERR);
         }
+
+#ifdef HAVE_SELINUX
+        int result;
+        if (selinux_file_context_verify(logfile, 0) == 0) {
+            result = selinux_restorecon(logfile, SELINUX_RESTORECON_RECURSE);
+
+            if (result < 0) {
+                syslog(LOG_WARNING, "Failure restoring SELinux context for \"%s\": %s", logfile, strerror(errno));
+            }
+        }
+#endif
     }
 
-    if (gethostname(hostname, sizeof(hostname)) == -1) {
-        perror("gethostname");
+    hostlen = sysconf(_SC_HOST_NAME_MAX);
+    if (hostlen < 0) {
+      syslog(LOG_CRIT, "sysconf(_SC_HOST_NAME_MAX): %s", strerror(errno));
+      _exit(EX_OSERR);
+    }
+    hostname = malloc(hostlen + 1);
+    if (gethostname(hostname, hostlen + 1) == -1) {
+        syslog(LOG_CRIT, "gethostname: %s", strerror(errno));
+        free(hostname);
         _exit(EX_OSERR);
     }
 
     snprintf(logfile, sizeof(logfile), "%s/.vnc/%s%s.log",
              homedir, hostname, display);
+    free(hostname);
     fd = open(logfile, O_CREAT | O_WRONLY | O_TRUNC, 0644);
     if (fd == -1) {
-        perror("open");
+        syslog(LOG_CRIT, "Failure creating log file \"%s\": %s", logfile, strerror(errno));
         _exit(EX_OSERR);
     }
     if ((dup2(fd, 1) == -1) || (dup2(fd, 2) == -1)) {
-        perror("dup2");
+        syslog(LOG_CRIT, "Failure redirecting stdout or stderr: %s", strerror(errno));
         _exit(EX_OSERR);
     }
     close(fd);
@@ -388,7 +413,7 @@ close_fds(void)
 
     dir = opendir("/proc/self/fd");
     if (dir == NULL) {
-        perror("opendir");
+        syslog(LOG_CRIT, "opendir: %s", strerror(errno));
         _exit(EX_OSERR);
     }
 
@@ -468,7 +493,7 @@ run_script(const char *username, const char *display, char **envp)
     execvp(child_argv[0], (char*const*)child_argv);
 
     // execvp failed
-    perror("execvp");
+    syslog(LOG_CRIT, "execvp: %s", strerror(errno));
 
     _exit(EX_OSERR);
 }

@@ -20,10 +20,6 @@
 #ifndef __RDR_TLSOUTSTREAM_H__
 #define __RDR_TLSOUTSTREAM_H__
 
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
-
 #ifdef HAVE_GNUTLS
 #include <gnutls/gnutls.h>
 #include <rdr/OutStream.h>
@@ -37,9 +33,10 @@ namespace rdr {
 
     void flush();
     size_t length();
+    virtual void cork(bool enable);
 
   protected:
-    size_t overrun(size_t itemSize, size_t nItems);
+    virtual void overrun(size_t needed);
 
   private:
     size_t writeTLS(const U8* data, size_t length);
@@ -50,6 +47,8 @@ namespace rdr {
     size_t bufSize;
     U8* start;
     size_t offset;
+
+    Exception* saved_exception;
   };
 };
 

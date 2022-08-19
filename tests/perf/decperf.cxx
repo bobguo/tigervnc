@@ -24,6 +24,10 @@
  * format.
  */
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -52,7 +56,7 @@ public:
   virtual void flush();
 
 private:
-  virtual size_t overrun(size_t itemSize, size_t nItems);
+  virtual void overrun(size_t needed);
 
   int offset;
   rdr::U8 buf[131072];
@@ -66,6 +70,7 @@ public:
   virtual void initDone();
   virtual void setPixelFormat(const rfb::PixelFormat& pf);
   virtual void setCursor(int, int, const rfb::Point&, const rdr::U8*);
+  virtual void setCursorPos(const rfb::Point&);
   virtual void framebufferUpdateStart();
   virtual void framebufferUpdateEnd();
   virtual void setColourMapEntries(int, int, rdr::U16*);
@@ -99,12 +104,11 @@ void DummyOutStream::flush()
   ptr = buf;
 }
 
-size_t DummyOutStream::overrun(size_t itemSize, size_t nItems)
+void DummyOutStream::overrun(size_t needed)
 {
   flush();
-  if (itemSize * nItems > (size_t)(end - ptr))
-    nItems = (end - ptr) / itemSize;
-  return nItems;
+  if (avail() < needed)
+    throw rdr::Exception("Insufficient dummy output buffer");
 }
 
 CConn::CConn(const char *filename)
@@ -142,6 +146,10 @@ void CConn::setPixelFormat(const rfb::PixelFormat& pf)
 }
 
 void CConn::setCursor(int, int, const rfb::Point&, const rdr::U8*)
+{
+}
+
+void CConn::setCursorPos(const rfb::Point&)
 {
 }
 

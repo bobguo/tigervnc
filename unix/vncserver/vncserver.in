@@ -103,7 +103,6 @@ my %config;
 # override these where present.
 $default_opts{desktop} = $desktopName;
 $default_opts{auth} = $xauthorityFile;
-$default_opts{rfbwait} = 30000;
 $default_opts{rfbauth} = "$vncUserDir/passwd";
 $default_opts{rfbport} = $vncPort;
 $default_opts{fp} = $fontPath if ($fontPath);
@@ -199,7 +198,7 @@ $ENV{DESKTOP_SESSION} = $sessionname;
 $ENV{XDG_SESSION_DESKTOP} = $sessionname;
 
 if ($session{'DesktopNames'}) {
-    $ENV{XDG_DESKTOP_NAMES} = $session{'DesktopNames'} =~ s/;/:/gr;
+    $ENV{XDG_CURRENT_DESKTOP} = $session{'DesktopNames'} =~ s/;/:/gr;
 }
 
 # Make an X server cookie and set up the Xauthority file

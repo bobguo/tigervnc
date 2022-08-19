@@ -48,6 +48,10 @@
 // otherwise blacklisted connections might be "forgotten".
 
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <assert.h>
 #include <stdlib.h>
 
@@ -137,7 +141,9 @@ void VNCServerST::addSocket(network::Socket* sock, bool outgoing)
       // Shortest possible way to tell a client it is not welcome
       os.writeBytes("RFB 003.003\n", 12);
       os.writeU32(0);
-      os.writeString("Too many security failures");
+      const char* reason = "Too many security failures";
+      os.writeU32(strlen(reason));
+      os.writeBytes(reason, strlen(reason));
       os.flush();
     } catch (rdr::Exception&) {
     }
@@ -169,16 +175,16 @@ void VNCServerST::removeSocket(network::Socket* sock) {
       if (pointerClient == *ci)
         pointerClient = NULL;
       if (clipboardClient == *ci)
-        clipboardClient = NULL;
+        handleClipboardAnnounce(*ci, false);
       clipboardRequestors.remove(*ci);
+
+      CharArray name(strDup((*ci)->getPeerEndpoint()));
 
       // - Delete the per-Socket resources
       delete *ci;
 
       clients.remove(*ci);
 
-      CharArray name;
-      name.buf = sock->getPeerEndpoint();
       connectionsLog.status("closed: %s", name.buf);
 
       // - Check that the desktop object is still required
@@ -336,8 +342,10 @@ void VNCServerST::setScreenLayout(const ScreenSet& layout)
 
 void VNCServerST::requestClipboard()
 {
-  if (clipboardClient == NULL)
+  if (clipboardClient == NULL) {
+    slog.debug("Got request for client clipboard but no client currently owns the clipboard");
     return;
+  }
 
   clipboardClient->requestClipboardOrClose();
 }
@@ -345,9 +353,6 @@ void VNCServerST::requestClipboard()
 void VNCServerST::announceClipboard(bool available)
 {
   std::list<VNCSConnectionST*>::iterator ci, ci_next;
-
-  if (available)
-    clipboardClient = NULL;
 
   clipboardRequestors.clear();
 
@@ -427,14 +432,17 @@ void VNCServerST::setCursor(int width, int height, const Point& newHotspot,
   }
 }
 
-void VNCServerST::setCursorPos(const Point& pos)
+void VNCServerST::setCursorPos(const Point& pos, bool warped)
 {
   if (!cursorPos.equals(pos)) {
     cursorPos = pos;
     renderedCursorInvalid = true;
     std::list<VNCSConnectionST*>::iterator ci;
-    for (ci = clients.begin(); ci != clients.end(); ci++)
+    for (ci = clients.begin(); ci != clients.end(); ci++) {
       (*ci)->renderedCursorChange();
+      if (warped)
+        (*ci)->cursorPositionChange();
+    }
   }
 }
 
@@ -515,8 +523,10 @@ void VNCServerST::handleClipboardAnnounce(VNCSConnectionST* client,
 void VNCServerST::handleClipboardData(VNCSConnectionST* client,
                                       const char* data)
 {
-  if (client != clipboardClient)
+  if (client != clipboardClient) {
+    slog.debug("Ignoring unexpected clipboard data");
     return;
+  }
   desktop->handleClipboardData(data);
 }
 
@@ -529,12 +539,16 @@ unsigned int VNCServerST::setDesktopSize(VNCSConnectionST* requester,
 
   // We can't handle a framebuffer larger than this, so don't let a
   // client set one (see PixelBuffer.cxx)
-  if ((fb_width > 16384) || (fb_height > 16384))
+  if ((fb_width > 16384) || (fb_height > 16384)) {
+    slog.error("Rejecting too large framebuffer resize request");
     return resultProhibited;
+  }
 
   // Don't bother the desktop with an invalid configuration
-  if (!layout.validate(fb_width, fb_height))
+  if (!layout.validate(fb_width, fb_height)) {
+    slog.error("Invalid screen layout requested by client");
     return resultInvalid;
+  }
 
   // FIXME: the desktop will call back to VNCServerST and an extra set
   // of ExtendedDesktopSize messages will be sent. This is okay

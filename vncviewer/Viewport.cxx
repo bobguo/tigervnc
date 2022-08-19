@@ -73,6 +73,7 @@
 
 #include <FL/Fl_Menu.H>
 #include <FL/Fl_Menu_Button.H>
+#include <FL/x.H>
 
 #if !defined(WIN32) && !defined(__APPLE__)
 #include <X11/XKBlib.h>
@@ -103,7 +104,7 @@ static rfb::LogWriter vlog("Viewport");
 
 // Menu constants
 
-enum { ID_EXIT, ID_FULLSCREEN, ID_MINIMIZE, ID_RESIZE,
+enum { ID_DISCONNECT, ID_FULLSCREEN, ID_MINIMIZE, ID_RESIZE,
        ID_CTRL, ID_ALT, ID_MENUKEY, ID_CTRLALTDEL,
        ID_REFRESH, ID_OPTIONS, ID_INFO, ID_ABOUT };
 
@@ -291,12 +292,8 @@ void Viewport::handleClipboardAnnounce(bool available)
   if (!acceptClipboard)
     return;
 
-  if (available)
-    vlog.debug("Got notification of new clipboard on server");
-  else
-    vlog.debug("Clipboard is no longer available on server");
-
   if (!available) {
+    vlog.debug("Clipboard is no longer available on server");
     pendingServerClipboard = false;
     return;
   }
@@ -304,10 +301,12 @@ void Viewport::handleClipboardAnnounce(bool available)
   pendingClientClipboard = false;
 
   if (!hasFocus()) {
+    vlog.debug("Got notification of new clipboard on server whilst not focused, will request data later");
     pendingServerClipboard = true;
     return;
   }
 
+  vlog.debug("Got notification of new clipboard on server, requesting data");
   cc->requestClipboard();
 }
 
@@ -574,7 +573,7 @@ int Viewport::handle(int event)
       cc->sendClipboardData(filtered);
     } catch (rdr::Exception& e) {
       vlog.error("%s", e.str());
-      exit_vncviewer(e.str());
+      abort_connection_with_unexpected_error(e);
     }
 
     strFree(filtered);
@@ -670,7 +669,7 @@ void Viewport::sendPointerEvent(const rfb::Point& pos, int buttonMask)
       cc->writer()->writePointerEvent(pos, buttonMask);
     } catch (rdr::Exception& e) {
       vlog.error("%s", e.str());
-      exit_vncviewer(e.str());
+      abort_connection_with_unexpected_error(e);
     }
   } else {
     if (!Fl::has_timeout(handlePointerTimeout, this))
@@ -759,17 +758,19 @@ void Viewport::handleClipboardChange(int source, void *data)
   self->pendingServerClipboard = false;
 
   if (!self->hasFocus()) {
+    vlog.debug("Local clipboard changed whilst not focused, will notify server later");
     self->pendingClientClipboard = true;
     // Clear any older client clipboard from the server
     self->cc->announceClipboard(false);
     return;
   }
 
+  vlog.debug("Local clipboard changed, notifying server");
   try {
     self->cc->announceClipboard(true);
   } catch (rdr::Exception& e) {
     vlog.error("%s", e.str());
-    exit_vncviewer(e.str());
+    abort_connection_with_unexpected_error(e);
   }
 }
 
@@ -777,19 +778,21 @@ void Viewport::handleClipboardChange(int source, void *data)
 void Viewport::flushPendingClipboard()
 {
   if (pendingServerClipboard) {
+    vlog.debug("Focus regained after remote clipboard change, requesting data");
     try {
       cc->requestClipboard();
     } catch (rdr::Exception& e) {
       vlog.error("%s", e.str());
-      exit_vncviewer(e.str());
+      abort_connection_with_unexpected_error(e);
     }
   }
   if (pendingClientClipboard) {
+    vlog.debug("Focus regained after local clipboard change, notifying server");
     try {
       cc->announceClipboard(true);
     } catch (rdr::Exception& e) {
       vlog.error("%s", e.str());
-      exit_vncviewer(e.str());
+      abort_connection_with_unexpected_error(e);
     }
   }
 
@@ -815,7 +818,7 @@ void Viewport::handlePointerTimeout(void *data)
                                           self->lastButtonMask);
   } catch (rdr::Exception& e) {
     vlog.error("%s", e.str());
-    exit_vncviewer(e.str());
+    abort_connection_with_unexpected_error(e);
   }
 }
 
@@ -884,7 +887,7 @@ void Viewport::handleKeyPress(int keyCode, rdr::U32 keySym)
       cc->writer()->writeKeyEvent(keySym, keyCode, true);
   } catch (rdr::Exception& e) {
     vlog.error("%s", e.str());
-    exit_vncviewer(e.str());
+    abort_connection_with_unexpected_error(e);
   }
 }
 
@@ -918,7 +921,7 @@ void Viewport::handleKeyRelease(int keyCode)
       cc->writer()->writeKeyEvent(iter->second, keyCode, false);
   } catch (rdr::Exception& e) {
     vlog.error("%s", e.str());
-    exit_vncviewer(e.str());
+    abort_connection_with_unexpected_error(e);
   }
 
   downKeySym.erase(iter);
@@ -1229,8 +1232,8 @@ void Viewport::initContextMenu()
 {
   contextMenu->clear();
 
-  fltk_menu_add(contextMenu, p_("ContextMenu|", "E&xit viewer"),
-                0, NULL, (void*)ID_EXIT, FL_MENU_DIVIDER);
+  fltk_menu_add(contextMenu, p_("ContextMenu|", "Dis&connect"),
+                0, NULL, (void*)ID_DISCONNECT, FL_MENU_DIVIDER);
 
   fltk_menu_add(contextMenu, p_("ContextMenu|", "&Full screen"),
                 0, NULL, (void*)ID_FULLSCREEN,
@@ -1304,8 +1307,8 @@ void Viewport::popupContextMenu()
     return;
 
   switch (m->argument()) {
-  case ID_EXIT:
-    exit_vncviewer();
+  case ID_DISCONNECT:
+    disconnect();
     break;
   case ID_FULLSCREEN:
     if (window()->fullscreen_active())
